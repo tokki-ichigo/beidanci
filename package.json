@@ -1,0 +1,34 @@
+{
+  "name": "beidanci",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "predeploy": "npm run build",
+    "deploy": "gh-pages -d dist",
+    "build": "vite build"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tokki-ichigo/beidanci.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/tokki-ichigo/beidanci/issues"
+  },
+  "homepage": "https://github.com/tokki-ichigo/beidanci#readme",
+  "dependencies": {
+    "@vitejs/plugin-react": "^6.1.1",
+    "lucide-react": "^1.47.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "vite": "^8.3.0"
+  },
+  "devDependencies": {
+    "gh-pages": "^6.3.0"
+  }
+}
