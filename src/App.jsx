@@ -3,24 +3,12 @@ import {
   BookOpen, Flame, CheckCircle, Home, Library, Settings, Eye, RotateCcw, 
   ChevronRight, Trophy, Volume2, Sparkles, Moon, Sun, Search, Plus, 
   Trash2, Star, Target, Brain, Award, Play, Check, X, ArrowRight,
-  Filter, Download, Upload, RefreshCw, BarChart2, Layers, HelpCircle, FileText
+  Filter, Download, Upload, RefreshCw, BarChart2, Layers, HelpCircle, FileText,
+  Clock, AlertCircle, HelpCircle as HelpIcon, Smile
 } from 'lucide-react';
 
-const PRESET_VOCABULARIES = {
-  cet4: {
-    id: 'cet4',
-    name: '新单词',
-    desc: '新单词',
-    words: [
-      { id: 'c1', word: 'Abandon', phonetic: '/əˈbændən/', type: 'v.', translation: '放弃，遗弃，离弃', example_en: 'He decided to abandon his car and continue on foot.', example_cn: '他决定放弃汽车，继续步行。', root: 'a-(加强) + bandon(控制) -> 放弃', tags: ['CET4', '核心'] },
-      { id: 'c2', word: 'Acknowledge', phonetic: '/əkˈnɒlɪdʒ/', type: 'v.', translation: '承认，对…表示感谢', example_en: 'She acknowledged receiving the letter.', example_cn: '她确认收到了信件。', root: 'ac-(朝向) + know(知道) + ledge -> 知道并承认', tags: ['CET4', '高频'] },
-      { id: 'c3', word: 'Benefit', phonetic: '/ˈbenɪfɪt/', type: 'n./v.', translation: '利益，好处；有益于', example_en: 'The new hospital will benefit the entire community.', example_cn: '新医院将造福整个社区。', root: 'bene(好) + fit(做) -> 做好事，引申为好处', tags: ['CET4', '基础'] },
-      { id: 'c4', word: 'Capacity', phonetic: '/kəˈpæsəti/', type: 'n.', translation: '容量，能力，生产力', example_en: 'The theatre has a seating capacity of 2,000.', example_cn: '这个剧场能容纳2000人。', root: 'cap(拿，抓) + acity -> 能抓住容纳的数量', tags: ['CET4'] }
-    ]
-  },
-  
-  
-};
+// 移除默认预设词库，改为完全自定义
+const PRESET_VOCABULARIES = {};
 
 const STORAGE_KEY = 'wordmaster_app_state_v2';
 
@@ -45,7 +33,9 @@ const saveStateToStorage = (state) => {
 export default function App() {
   const [theme, setTheme] = useState(() => loadStateFromStorage()?.theme || 'light');
   const [activeTab, setActiveTab] = useState('dashboard');
-  const [selectedBookId, setSelectedBookId] = useState('ielts');
+  
+  // 默认选中我的自定义词库
+  const [selectedBookId, setSelectedBookId] = useState('custom');
   const [dailyGoal, setDailyGoal] = useState(() => loadStateFromStorage()?.dailyGoal || 15);
   const [accentPreference, setAccentPreference] = useState(() => loadStateFromStorage()?.accentPreference || 'en-US');
   const [autoPronounce, setAutoPronounce] = useState(() => loadStateFromStorage()?.autoPronounce ?? true);
@@ -53,12 +43,13 @@ export default function App() {
   const [userProgress, setUserProgress] = useState(() => loadStateFromStorage()?.userProgress || {});
   const [userStats, setUserStats] = useState(() => loadStateFromStorage()?.userStats || {
     learnedToday: 0,
-    streakDays: 5,
+    streakDays: 1,
     lastActiveDate: new Date().toISOString().split('T')[0],
-    totalReviews: 42
+    totalReviews: 0
   });
 
   const [customWords, setCustomWords] = useState(() => loadStateFromStorage()?.customWords || []);
+  const [deletedWordIds, setDeletedWordIds] = useState(() => loadStateFromStorage()?.deletedWordIds || []);
   const [toastMessage, setToastMessage] = useState(null);
 
   useEffect(() => {
@@ -69,9 +60,10 @@ export default function App() {
       autoPronounce,
       userProgress,
       userStats,
-      customWords
+      customWords,
+      deletedWordIds
     });
-  }, [theme, dailyGoal, accentPreference, autoPronounce, userProgress, userStats, customWords]);
+  }, [theme, dailyGoal, accentPreference, autoPronounce, userProgress, userStats, customWords, deletedWordIds]);
 
   useEffect(() => {
     if (theme === 'dark') {
@@ -99,30 +91,59 @@ export default function App() {
   };
 
   const allCurrentWords = useMemo(() => {
-    if (selectedBookId === 'custom') {
-      return customWords;
+    let sourceWords = customWords;
+    return sourceWords.filter(w => !deletedWordIds.includes(w.id));
+  }, [customWords, deletedWordIds]);
+
+  const deletedWordsList = useMemo(() => {
+    return customWords.filter(w => deletedWordIds.includes(w.id));
+  }, [customWords, deletedWordIds]);
+
+  const handleDeleteWord = (wordId) => {
+    if (!deletedWordIds.includes(wordId)) {
+      setDeletedWordIds(prev => [...prev, wordId]);
+      showToast('已将单词移入垃圾桶/删除');
     }
-    return PRESET_VOCABULARIES[selectedBookId]?.words || [];
-  }, [selectedBookId, customWords]);
+  };
+
+  const handleRestoreWord = (wordId) => {
+    setDeletedWordIds(prev => prev.filter(id => id !== wordId));
+    showToast('已恢复保留该单词');
+  };
+
+  const handleClearTrash = () => {
+    if (window.confirm('确定要彻底清空已删除列表吗？')) {
+      setCustomWords(prev => prev.filter(w => !deletedWordIds.includes(w.id)));
+      setDeletedWordIds([]);
+      showToast('垃圾桶已清空');
+    }
+  };
 
   const statsCalculated = useMemo(() => {
-    let masteredCount = 0;
-    let learningCount = 0;
+    let forgotCount = 0;   // 1天 (忘记)
+    let vagueCount = 0;    // 3天 (模糊)
+    let familiarCount = 0; // 7天 (熟知)
+    let masteredCount = 0; // 30天 (太简单/已掌握)
     
     Object.values(userProgress).forEach(item => {
-      if (item.status === 'mastered') masteredCount++;
-      else if (item.status === 'learning') learningCount++;
+      if (item.status === 'forgot') forgotCount++;
+      else if (item.status === 'vague') vagueCount++;
+      else if (item.status === 'familiar') familiarCount++;
+      else if (item.status === 'mastered') masteredCount++;
     });
 
-    const retentionRate = (masteredCount + learningCount) > 0 
-      ? Math.round((masteredCount / (masteredCount + learningCount)) * 100) 
-      : 85;
+    const totalAssessed = forgotCount + vagueCount + familiarCount + masteredCount;
+    const retentionRate = totalAssessed > 0 
+      ? Math.round(((familiarCount + masteredCount) / totalAssessed) * 100) 
+      : 100;
 
     return {
       learnedToday: userStats.learnedToday,
       dailyGoal,
+      forgotCount,
+      vagueCount,
+      familiarCount,
       masteredCount,
-      learningCount,
       streakDays: userStats.streakDays,
       retentionRate
     };
@@ -131,9 +152,11 @@ export default function App() {
   const handleWordEvaluate = (wordId, rating) => {
     const now = Date.now();
     const intervals = { 1: 1, 2: 3, 3: 7, 4: 30 };
+    const statusMap = { 1: 'forgot', 2: 'vague', 3: 'familiar', 4: 'mastered' };
+    
     const daysToAdd = intervals[rating] || 1;
     const nextReviewDate = now + daysToAdd * 24 * 60 * 60 * 1000;
-    const newStatus = rating >= 3 ? 'mastered' : 'learning';
+    const newStatus = statusMap[rating] || 'learning';
 
     setUserProgress(prev => ({
       ...prev,
@@ -170,7 +193,6 @@ export default function App() {
     showToast('生词本标记已更新');
   };
 
-  // 批量导入 CSV / TXT 文件解析器
   const handleBatchImport = (importedWordsList) => {
     setCustomWords(prev => [...importedWordsList, ...prev]);
     setSelectedBookId('custom');
@@ -202,20 +224,9 @@ export default function App() {
 
             <div className="hidden sm:block h-5 w-[1px] bg-slate-300 dark:bg-slate-700 mx-1"></div>
 
-            <select
-              value={selectedBookId}
-              onChange={(e) => setSelectedBookId(e.target.value)}
-              className={`text-xs font-semibold px-3 py-1.5 rounded-lg border cursor-pointer outline-none transition-all ${
-                theme === 'dark' 
-                  ? 'bg-slate-800 border-slate-700 text-slate-200 hover:border-slate-600' 
-                  : 'bg-slate-100 border-slate-200 text-slate-700 hover:border-slate-300'
-              }`}
-            >
-              {Object.values(PRESET_VOCABULARIES).map(book => (
-                <option key={book.id} value={book.id}>{book.name}</option>
-              ))}
-              <option value="custom">✨ 我的自定义词库 ({customWords.length})</option>
-            </select>
+            <span className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-indigo-50 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-400">
+              ✨ 我的词库 ({customWords.length})
+            </span>
           </div>
 
           <nav className="hidden md:flex items-center gap-1">
@@ -246,7 +257,7 @@ export default function App() {
           <DashboardView 
             stats={statsCalculated} 
             theme={theme}
-            currentBookName={selectedBookId === 'custom' ? '自定义词库' : PRESET_VOCABULARIES[selectedBookId]?.name}
+            currentBookName="我的词库"
             onStartLearning={() => setActiveTab('learning')}
             onStartQuiz={() => setActiveTab('quiz')}
           />
@@ -282,15 +293,15 @@ export default function App() {
             onSelectBook={setSelectedBookId}
             userProgress={userProgress}
             customWords={customWords}
+            deletedWords={deletedWordsList}
             onAddCustomWord={(newW) => {
               setCustomWords(prev => [newW, ...prev]);
               showToast('已添加新词条');
             }}
             onBatchImport={handleBatchImport}
-            onDeleteCustomWord={(id) => {
-              setCustomWords(prev => prev.filter(w => w.id !== id));
-              showToast('已删除词条');
-            }}
+            onDeleteWord={handleDeleteWord}
+            onRestoreWord={handleRestoreWord}
+            onClearTrash={handleClearTrash}
             onToggleStar={toggleStarWord}
             speak={speakWord}
             theme={theme}
@@ -310,6 +321,7 @@ export default function App() {
                 setUserProgress({});
                 setUserStats({ learnedToday: 0, streakDays: 0, lastActiveDate: '', totalReviews: 0 });
                 setCustomWords([]);
+                setDeletedWordIds([]);
                 showToast('已重置所有用户数据');
               }
             }}
@@ -381,13 +393,13 @@ function DashboardView({ stats, theme, currentBookName, onStartLearning, onStart
         <div className="relative z-10 flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
           <div>
             <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-indigo-600 text-white mb-3">
-              <Sparkles size={12} /> SM-2 智能复习推荐
+              <Sparkles size={12} /> SM-2 智能归类算法
             </span>
             <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
               保持节奏，高效积累！
             </h1>
             <p className={`mt-2 text-sm sm:text-base max-w-xl ${theme === 'dark' ? 'text-slate-400' : 'text-slate-600'}`}>
-              当前词库：<span className="font-semibold text-indigo-500">{currentBookName}</span>。基于记忆曲线，系统已为你精选今日需要背诵与复习的词条。
+              当前词库：<span className="font-semibold text-indigo-500">{currentBookName}</span>。选择1天、3天、7天、30天后，系统将自动将词汇归类至不同记忆阶段。
             </p>
           </div>
 
@@ -415,33 +427,31 @@ function DashboardView({ stats, theme, currentBookName, onStartLearning, onStart
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         <StatCard icon={<Target className="text-indigo-500" size={24} />} label="今日目标" value={`${stats.learnedToday} / ${stats.dailyGoal}`} subText={`完成度 ${goalPercent}%`} theme={theme} />
         <StatCard icon={<Flame className="text-amber-500" size={24} />} label="连续打卡" value={`${stats.streakDays} 天`} subText="状态良好" theme={theme} />
-        <StatCard icon={<CheckCircle className="text-emerald-500" size={24} />} label="已掌握词汇" value={`${stats.masteredCount} 词`} subText={`复习中 ${stats.learningCount}`} theme={theme} />
-        <StatCard icon={<BarChart2 className="text-sky-500" size={24} />} label="记忆持久率" value={`${stats.retentionRate}%`} subText="记忆曲线保护中" theme={theme} />
+        <StatCard icon={<CheckCircle className="text-emerald-500" size={24} />} label="已掌握(30天)" value={`${stats.masteredCount} 词`} subText={`熟知(7天): ${stats.familiarCount}`} theme={theme} />
+        <StatCard icon={<BarChart2 className="text-sky-500" size={24} />} label="记忆持久率" value={`${stats.retentionRate}%`} subText="自动归类算法" theme={theme} />
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className={`md:col-span-2 p-6 rounded-3xl border transition-colors ${theme === 'dark' ? 'bg-slate-800/60 border-slate-700' : 'bg-white border-slate-200'}`}>
-          <div className="flex justify-between items-center mb-4">
-            <h3 className="font-bold text-lg flex items-center gap-2"><Trophy size={20} className="text-amber-500" /> 今日进度</h3>
-            <span className="text-xs font-bold px-2.5 py-1 bg-indigo-50 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-400 rounded-lg">{goalPercent}%</span>
+      {/* 归类阶段面板 */}
+      <div className={`p-6 rounded-3xl border ${theme === 'dark' ? 'bg-slate-800/60 border-slate-700' : 'bg-white border-slate-200'}`}>
+        <h3 className="font-bold text-lg mb-4 flex items-center gap-2">
+          <Layers size={20} className="text-indigo-500" /> 词汇归类状态分布
+        </h3>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="p-3.5 rounded-2xl bg-red-50 dark:bg-red-950/30 border border-red-100 dark:border-red-900/40 text-center">
+            <span className="text-xs font-bold text-red-600 dark:text-red-400">忘记 (1天)</span>
+            <p className="text-2xl font-black text-red-600 dark:text-red-400 mt-1">{stats.forgotCount}</p>
           </div>
-          <div className="w-full bg-slate-100 dark:bg-slate-700 h-4 rounded-full overflow-hidden p-0.5 mb-4">
-            <div className="bg-gradient-to-r from-indigo-500 to-violet-500 h-full rounded-full transition-all duration-500" style={{ width: `${goalPercent}%` }}></div>
+          <div className="p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/30 border border-amber-100 dark:border-amber-900/40 text-center">
+            <span className="text-xs font-bold text-amber-600 dark:text-amber-400">模糊 (3天)</span>
+            <p className="text-2xl font-black text-amber-600 dark:text-amber-400 mt-1">{stats.vagueCount}</p>
           </div>
-          <p className={`text-xs ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>
-            {goalPercent >= 100 ? '🎉 太棒了！今天预定目标已完成，可以前往词库复习或测试！' : `还差 ${stats.dailyGoal - stats.learnedToday} 个单词达成目标。`}
-          </p>
-        </div>
-
-        <div className={`p-6 rounded-3xl border flex flex-col justify-between ${theme === 'dark' ? 'bg-slate-800/60 border-slate-700' : 'bg-white border-slate-200'}`}>
-          <div>
-            <h3 className="font-bold text-lg mb-2 flex items-center gap-2"><Brain size={20} className="text-violet-500" /> 智能记忆保护</h3>
-            <p className={`text-xs leading-relaxed ${theme === 'dark' ? 'text-slate-400' : 'text-slate-600'}`}>
-              本地数据完全独立存储在浏览器中，系统会在临近遗忘节点为你重新安排出现频率。
-            </p>
+          <div className="p-3.5 rounded-2xl bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-100 dark:border-indigo-900/40 text-center">
+            <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400">熟知 (7天)</span>
+            <p className="text-2xl font-black text-indigo-600 dark:text-indigo-400 mt-1">{stats.familiarCount}</p>
           </div>
-          <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-700 flex justify-between items-center text-xs font-semibold text-indigo-500">
-            <span>本地存储实时同步</span><Check size={16} />
+          <div className="p-3.5 rounded-2xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-100 dark:border-emerald-900/40 text-center">
+            <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400">太简单 (30天)</span>
+            <p className="text-2xl font-black text-emerald-600 dark:text-emerald-400 mt-1">{stats.masteredCount}</p>
           </div>
         </div>
       </div>
@@ -504,7 +514,7 @@ function LearningCardView({ words, userProgress, onEvaluate, onToggleStar, speak
   if (!words || words.length === 0) {
     return (
       <div className="text-center py-20">
-        <p className="text-slate-500 mb-4">当前所选词库没有单词，请前往“词库管理”添加或导入单词本。</p>
+        <p className="text-slate-500 mb-4">词库目前没有单词，请前往“词库管理”导入你的本地 CSV 或添加单词。</p>
         <button onClick={onFinish} className="px-6 py-2.5 bg-indigo-600 text-white rounded-xl font-bold">返回仪表盘</button>
       </div>
     );
@@ -517,7 +527,7 @@ function LearningCardView({ words, userProgress, onEvaluate, onToggleStar, speak
           <CheckCircle size={44} />
         </div>
         <h2 className="text-2xl font-black mb-2">太棒了，全部学完！</h2>
-        <p className={`text-sm mb-8 ${theme === 'dark' ? 'text-slate-400' : 'text-slate-600'}`}>所有评估均已同步保存到本地数据库。</p>
+        <p className={`text-sm mb-8 ${theme === 'dark' ? 'text-slate-400' : 'text-slate-600'}`}>归类选择已完全同步并自动归类到对应类别中。</p>
         <button onClick={onFinish} className="w-full py-3.5 bg-gradient-to-r from-indigo-600 to-violet-600 text-white font-bold rounded-2xl shadow-lg shadow-indigo-500/25">
           完成并返回仪表盘
         </button>
@@ -603,7 +613,7 @@ function LearningCardView({ words, userProgress, onEvaluate, onToggleStar, speak
             <AssessmentButton shortcut="3" label="熟知" subText="7天后复习" color="bg-indigo-50 text-indigo-600 border-indigo-200 dark:bg-indigo-950/40 dark:text-indigo-400 dark:border-indigo-900 hover:bg-indigo-100" onClick={() => handleChoice(3)} />
             <AssessmentButton shortcut="4" label="太简单" subText="30天后复习" color="bg-emerald-50 text-emerald-600 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-400 dark:border-emerald-900 hover:bg-emerald-100" onClick={() => handleChoice(4)} />
           </div>
-          <p className="text-center text-[11px] text-slate-400">数字键 1-4 可触发快捷评估</p>
+          <p className="text-center text-[11px] text-slate-400">选择后将根据天数自动分类整理</p>
         </div>
       )}
     </div>
@@ -631,7 +641,7 @@ function QuizSpellingView({ words, speak, theme, onFinish }) {
   const currentWord = words[currentIndex];
 
   if (!words || words.length === 0) {
-    return <div className="text-center py-20 text-slate-500">词库暂无词条可供测验</div>;
+    return <div className="text-center py-20 text-slate-500">词库暂无可用词条可供测验</div>;
   }
 
   const handleSubmit = (e) => {
@@ -732,9 +742,14 @@ function QuizSpellingView({ words, speak, theme, onFinish }) {
   );
 }
 
-function VocabularyLibraryView({ words, presetBooks, selectedBookId, onSelectBook, userProgress, customWords, onAddCustomWord, onBatchImport, onDeleteCustomWord, onToggleStar, speak, theme }) {
+function VocabularyLibraryView({ 
+  words, presetBooks, selectedBookId, onSelectBook, userProgress, 
+  customWords, deletedWords, onAddCustomWord, onBatchImport, onDeleteWord, 
+  onRestoreWord, onClearTrash, onToggleStar, speak, theme 
+}) {
   const [searchTerm, setSearchTerm] = useState('');
-  const [filterMode, setFilterMode] = useState('all');
+  const [filterMode, setFilterMode] = useState('all'); 
+  const [selectedDetailWord, setSelectedDetailWord] = useState(null); 
   const [showAddModal, setShowAddModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
 
@@ -743,12 +758,17 @@ function VocabularyLibraryView({ words, presetBooks, selectedBookId, onSelectBoo
 
   const fileInputRef = useRef(null);
 
-  const filteredWords = words.filter(w => {
+  const sourceList = filterMode === 'deleted' ? deletedWords : words;
+
+  const filteredWords = sourceList.filter(w => {
     const matchesSearch = w.word.toLowerCase().includes(searchTerm.toLowerCase()) || w.translation.includes(searchTerm);
     if (!matchesSearch) return false;
 
     if (filterMode === 'starred') return !!userProgress[w.id]?.starred;
-    if (filterMode === 'mastered') return userProgress[w.id]?.status === 'mastered';
+    if (filterMode === 'forgot') return userProgress[w.id]?.status === 'forgot';     // 1天
+    if (filterMode === 'vague') return userProgress[w.id]?.status === 'vague';       // 3天
+    if (filterMode === 'familiar') return userProgress[w.id]?.status === 'familiar'; // 7天
+    if (filterMode === 'mastered') return userProgress[w.id]?.status === 'mastered'; // 30天
     return true;
   });
 
@@ -766,14 +786,12 @@ function VocabularyLibraryView({ words, presetBooks, selectedBookId, onSelectBoo
     setShowAddModal(false);
   };
 
-  // 解析上传的文本 (支持 CSV / 逗号 / Tab / 冒号分割)
   const parseAndImportText = (textData) => {
     const lines = textData.split(/\r?\n/);
     const parsedList = [];
 
     lines.forEach((line, idx) => {
       if (!line.trim()) return;
-      // 兼容 CSV 逗号、Tab、减号或冒号分隔
       const parts = line.split(/,|\t|-|：|:/).map(p => p.trim());
       if (parts.length >= 2) {
         const word = parts[0];
@@ -802,7 +820,6 @@ function VocabularyLibraryView({ words, presetBooks, selectedBookId, onSelectBoo
     }
   };
 
-  // 文件读取机制
   const handleFileUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -814,7 +831,6 @@ function VocabularyLibraryView({ words, presetBooks, selectedBookId, onSelectBoo
     reader.readAsText(file);
   };
 
-  // 导出 JSON/CSV 文件备份
   const handleExportCustomWords = () => {
     if (customWords.length === 0) {
       alert('你目前还没有自定义或导入的单词！');
@@ -830,50 +846,74 @@ function VocabularyLibraryView({ words, presetBooks, selectedBookId, onSelectBoo
     URL.revokeObjectURL(url);
   };
 
+  const getStatusBadge = (status) => {
+    switch (status) {
+      case 'forgot':
+        return <span className="text-[10px] font-bold px-2 py-0.5 bg-red-100 text-red-600 dark:bg-red-950 dark:text-red-400 rounded-md">1天·忘记</span>;
+      case 'vague':
+        return <span className="text-[10px] font-bold px-2 py-0.5 bg-amber-100 text-amber-600 dark:bg-amber-950 dark:text-amber-400 rounded-md">3天·模糊</span>;
+      case 'familiar':
+        return <span className="text-[10px] font-bold px-2 py-0.5 bg-indigo-100 text-indigo-600 dark:bg-indigo-950 dark:text-indigo-400 rounded-md">7天·熟知</span>;
+      case 'mastered':
+        return <span className="text-[10px] font-bold px-2 py-0.5 bg-emerald-100 text-emerald-600 dark:bg-emerald-950 dark:text-emerald-400 rounded-md">30天·太简单</span>;
+      default:
+        return null;
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
           <h2 className="text-2xl font-black">词库与生词本</h2>
-          <p className={`text-xs ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>当前选中词库包含 {words.length} 个词条</p>
+          <p className={`text-xs ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>
+            {filterMode === 'deleted' ? `已删除单词数：${deletedWords.length}` : `当前列表展现词条：${filteredWords.length}`}
+          </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            onClick={() => setShowImportModal(true)}
-            className={`px-3.5 py-2 rounded-xl text-xs font-bold border flex items-center gap-1.5 transition-all ${
-              theme === 'dark' ? 'bg-slate-800 border-slate-700 hover:bg-slate-700 text-slate-200' : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-700'
-            }`}
-          >
-            <Upload size={14} /> 批量导入文件
-          </button>
-
-          {selectedBookId === 'custom' && (
+          {filterMode === 'deleted' ? (
             <button
-              onClick={handleExportCustomWords}
-              className={`px-3.5 py-2 rounded-xl text-xs font-bold border flex items-center gap-1.5 transition-all ${
-                theme === 'dark' ? 'bg-slate-800 border-slate-700 hover:bg-slate-700 text-slate-200' : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-700'
-              }`}
+              onClick={onClearTrash}
+              className="px-3.5 py-2 bg-red-600 hover:bg-red-500 text-white font-bold rounded-xl flex items-center gap-1.5 text-xs shadow-sm"
             >
-              <Download size={14} /> 备份导出
+              <Trash2 size={14} /> 清空垃圾桶
             </button>
-          )}
+          ) : (
+            <>
+              <button
+                onClick={() => setShowImportModal(true)}
+                className={`px-3.5 py-2 rounded-xl text-xs font-bold border flex items-center gap-1.5 transition-all ${
+                  theme === 'dark' ? 'bg-slate-800 border-slate-700 hover:bg-slate-700 text-slate-200' : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-700'
+                }`}
+              >
+                <Upload size={14} /> 批量导入文件
+              </button>
 
-          <button
-            onClick={() => {
-              onSelectBook('custom');
-              setShowAddModal(true);
-            }}
-            className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl flex items-center gap-1.5 text-xs shadow-sm"
-          >
-            <Plus size={16} /> 单条添加
-          </button>
+              <button
+                onClick={handleExportCustomWords}
+                className={`px-3.5 py-2 rounded-xl text-xs font-bold border flex items-center gap-1.5 transition-all ${
+                  theme === 'dark' ? 'bg-slate-800 border-slate-700 hover:bg-slate-700 text-slate-200' : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-700'
+                }`}
+              >
+                <Download size={14} /> 备份导出
+              </button>
+
+              <button
+                onClick={() => {
+                  setShowAddModal(true);
+                }}
+                className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl flex items-center gap-1.5 text-xs shadow-sm"
+              >
+                <Plus size={16} /> 单条添加
+              </button>
+            </>
+          )}
         </div>
       </div>
 
-      {/* Filter and Search Bar */}
-      <div className="flex flex-col sm:flex-row gap-3">
-        <div className="relative flex-1">
+      <div className="space-y-3">
+        <div className="relative">
           <Search className="absolute left-3.5 top-3 text-slate-400" size={18} />
           <input
             type="text"
@@ -886,53 +926,102 @@ function VocabularyLibraryView({ words, presetBooks, selectedBookId, onSelectBoo
           />
         </div>
 
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <button
             onClick={() => setFilterMode('all')}
-            className={`px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all ${filterMode === 'all' ? 'bg-indigo-600 text-white' : 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400'}`}
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${filterMode === 'all' ? 'bg-indigo-600 text-white' : 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400'}`}
           >
             全部
           </button>
           <button
             onClick={() => setFilterMode('starred')}
-            className={`px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1 ${filterMode === 'starred' ? 'bg-amber-500 text-white' : 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400'}`}
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1 ${filterMode === 'starred' ? 'bg-amber-500 text-white' : 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400'}`}
           >
-            <Star size={14} fill="currentColor" /> 生词本
+            <Star size={12} fill="currentColor" /> 生词本
+          </button>
+          <button
+            onClick={() => setFilterMode('forgot')}
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${filterMode === 'forgot' ? 'bg-red-600 text-white' : 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400'}`}
+          >
+            1天·忘记
+          </button>
+          <button
+            onClick={() => setFilterMode('vague')}
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${filterMode === 'vague' ? 'bg-amber-600 text-white' : 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400'}`}
+          >
+            3天·模糊
+          </button>
+          <button
+            onClick={() => setFilterMode('familiar')}
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${filterMode === 'familiar' ? 'bg-indigo-600 text-white' : 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400'}`}
+          >
+            7天·熟知
+          </button>
+          <button
+            onClick={() => setFilterMode('mastered')}
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${filterMode === 'mastered' ? 'bg-emerald-600 text-white' : 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400'}`}
+          >
+            30天·太简单
+          </button>
+          <button
+            onClick={() => setFilterMode('deleted')}
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1 ${filterMode === 'deleted' ? 'bg-red-600 text-white' : 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400'}`}
+          >
+            <Trash2 size={12} /> 回收站({deletedWords.length})
           </button>
         </div>
       </div>
 
-      {/* Word List */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {filteredWords.map(item => {
           const isStarred = !!userProgress[item.id]?.starred;
+          const wordStatus = userProgress[item.id]?.status;
 
           return (
-            <div key={item.id} className={`p-5 rounded-2xl border flex justify-between items-start transition-all ${
-              theme === 'dark' ? 'bg-slate-800/80 border-slate-700/80' : 'bg-white border-slate-200 shadow-sm'
-            }`}>
+            <div 
+              key={item.id} 
+              onClick={() => setSelectedDetailWord(item)}
+              className={`p-5 rounded-2xl border flex justify-between items-start transition-all cursor-pointer hover:border-indigo-400 ${
+                theme === 'dark' ? 'bg-slate-800/80 border-slate-700/80' : 'bg-white border-slate-200 shadow-sm'
+              }`}
+            >
               <div className="space-y-1">
                 <div className="flex items-center gap-2">
                   <h4 className="text-lg font-black text-indigo-600 dark:text-indigo-400">{item.word}</h4>
                   <span className="text-xs font-mono text-slate-400">{item.phonetic}</span>
-                  <button onClick={() => speak(item.word)} className="text-slate-400 hover:text-indigo-500"><Volume2 size={16} /></button>
+                  {getStatusBadge(wordStatus)}
+                  <button onClick={(e) => { e.stopPropagation(); speak(item.word); }} className="text-slate-400 hover:text-indigo-500"><Volume2 size={16} /></button>
                 </div>
                 <p className="text-sm font-semibold">{item.type} {item.translation}</p>
-                {item.example_en && <p className="text-xs text-slate-400 italic mt-1">{item.example_en}</p>}
+                {item.example_en && <p className="text-xs text-slate-400 italic mt-1 line-clamp-1">{item.example_en}</p>}
               </div>
 
-              <div className="flex items-center gap-1">
-                <button
-                  onClick={() => onToggleStar(item.id)}
-                  className={`p-2 rounded-lg ${isStarred ? 'text-amber-500' : 'text-slate-300 dark:text-slate-600 hover:text-amber-500'}`}
-                >
-                  <Star size={18} fill={isStarred ? 'currentColor' : 'none'} />
-                </button>
-
-                {selectedBookId === 'custom' && (
-                  <button onClick={() => onDeleteCustomWord(item.id)} className="p-2 text-slate-300 hover:text-red-500">
-                    <Trash2 size={18} />
+              <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                {filterMode === 'deleted' ? (
+                  <button 
+                    onClick={() => onRestoreWord(item.id)} 
+                    className="px-2.5 py-1 rounded-lg text-xs font-bold bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400 hover:bg-emerald-200"
+                  >
+                    恢复保留
                   </button>
+                ) : (
+                  <>
+                    <button
+                      onClick={() => onToggleStar(item.id)}
+                      className={`p-2 rounded-lg ${isStarred ? 'text-amber-500' : 'text-slate-300 dark:text-slate-600 hover:text-amber-500'}`}
+                      title="标记为生词"
+                    >
+                      <Star size={18} fill={isStarred ? 'currentColor' : 'none'} />
+                    </button>
+
+                    <button 
+                      onClick={() => onDeleteWord(item.id)} 
+                      className="p-2 text-slate-300 hover:text-red-500 transition-colors"
+                      title="删除此单词"
+                    >
+                      <Trash2 size={18} />
+                    </button>
+                  </>
                 )}
               </div>
             </div>
@@ -940,7 +1029,87 @@ function VocabularyLibraryView({ words, presetBooks, selectedBookId, onSelectBoo
         })}
       </div>
 
-      {/* 单条添加 Modal */}
+      {selectedDetailWord && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setSelectedDetailWord(null)}>
+          <div 
+            onClick={(e) => e.stopPropagation()} 
+            className={`w-full max-w-lg p-6 sm:p-8 rounded-3xl space-y-6 ${theme === 'dark' ? 'bg-slate-800 text-white border border-slate-700' : 'bg-white text-slate-900 shadow-2xl'}`}
+          >
+            <div className="flex justify-between items-start">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold px-3 py-1 bg-indigo-50 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-400 rounded-full">
+                    {selectedDetailWord.tags?.[0] || 'VOCAB'}
+                  </span>
+                  {getStatusBadge(userProgress[selectedDetailWord.id]?.status)}
+                </div>
+                <h2 className="text-3xl font-black mt-2">{selectedDetailWord.word}</h2>
+                <div className="flex items-center gap-2 mt-1">
+                  <span className="text-sm font-mono text-slate-400">{selectedDetailWord.phonetic}</span>
+                  <button onClick={() => speak(selectedDetailWord.word)} className="p-1.5 text-indigo-500"><Volume2 size={18} /></button>
+                </div>
+              </div>
+              <button onClick={() => setSelectedDetailWord(null)} className="p-1 text-slate-400 hover:text-slate-600"><X size={20} /></button>
+            </div>
+
+            <div className="space-y-3 border-t border-b border-slate-100 dark:border-slate-700 py-4">
+              <div>
+                <span className="text-xs font-bold text-slate-400 uppercase">释义</span>
+                <p className="text-lg font-bold text-indigo-600 dark:text-indigo-400 mt-0.5">
+                  <span className="text-sm font-normal text-slate-400 mr-2">{selectedDetailWord.type}</span>
+                  {selectedDetailWord.translation}
+                </p>
+              </div>
+
+              {selectedDetailWord.example_en && (
+                <div className="bg-slate-50 dark:bg-slate-900/50 p-3.5 rounded-2xl border border-slate-100 dark:border-slate-800 space-y-1">
+                  <p className="text-sm font-semibold">{selectedDetailWord.example_en}</p>
+                  {selectedDetailWord.example_cn && <p className="text-xs text-slate-400">{selectedDetailWord.example_cn}</p>}
+                </div>
+              )}
+
+              {selectedDetailWord.root && (
+                <p className="text-xs text-slate-400 flex items-center gap-1.5">
+                  <Sparkles size={14} className="text-amber-500" />
+                  <span className="font-semibold text-slate-500">记忆辅助：</span> {selectedDetailWord.root}
+                </p>
+              )}
+            </div>
+
+            <div className="flex justify-between items-center gap-3">
+              <button
+                onClick={() => setSelectedDetailWord(null)}
+                className="flex-1 py-3 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold rounded-xl hover:bg-slate-200 text-sm"
+              >
+                保留 / 返回
+              </button>
+
+              {deletedWords.some(w => w.id === selectedDetailWord.id) ? (
+                <button
+                  onClick={() => {
+                    onRestoreWord(selectedDetailWord.id);
+                    setSelectedDetailWord(null);
+                  }}
+                  className="flex-1 py-3 bg-emerald-600 text-white font-bold rounded-xl hover:bg-emerald-500 text-sm"
+                >
+                  恢复单词
+                </button>
+              ) : (
+                <button
+                  onClick={() => {
+                    onDeleteWord(selectedDetailWord.id);
+                    setSelectedDetailWord(null);
+                  }}
+                  className="flex-1 py-3 bg-red-600 text-white font-bold rounded-xl hover:bg-red-500 text-sm flex items-center justify-center gap-1.5"
+                >
+                  <Trash2 size={16} /> 删除此单词
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {showAddModal && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
           <div className={`w-full max-w-md p-6 rounded-3xl space-y-4 ${theme === 'dark' ? 'bg-slate-800 text-white' : 'bg-white text-slate-900'}`}>
@@ -985,7 +1154,6 @@ function VocabularyLibraryView({ words, presetBooks, selectedBookId, onSelectBoo
         </div>
       )}
 
-      {/* 批量导入 Modal */}
       {showImportModal && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
           <div className={`w-full max-w-lg p-6 rounded-3xl space-y-4 ${theme === 'dark' ? 'bg-slate-800 text-white' : 'bg-white text-slate-900'}`}>
