@@ -6,7 +6,10 @@ import {
   Filter, Download, Upload, RefreshCw, BarChart2, Layers, HelpCircle, FileText
 } from 'lucide-react';
 
-// 彻底清空预设词库，不需要 cet4
+// 这是你 GitHub 仓库里 words.csv 的直接拉取地址
+const GITHUB_CSV_URL = 'https://raw.githubusercontent.com/tokki-ichigo/beidanci/main/words.csv'; 
+
+// 彻底清空预设词库，完全依赖自定义和 GitHub CSV
 const PRESET_VOCABULARIES = {};
 
 const STORAGE_KEY = 'wordmaster_app_state_v2';
@@ -33,7 +36,7 @@ export default function App() {
   const [theme, setTheme] = useState(() => loadStateFromStorage()?.theme || 'light');
   const [activeTab, setActiveTab] = useState('dashboard');
   
-  // 默认直接选中自定义词库
+  // 默认锁定自定义词库
   const [selectedBookId, setSelectedBookId] = useState('custom');
   
   const [dailyGoal, setDailyGoal] = useState(() => loadStateFromStorage()?.dailyGoal || 15);
@@ -43,16 +46,83 @@ export default function App() {
   const [userProgress, setUserProgress] = useState(() => loadStateFromStorage()?.userProgress || {});
   const [userStats, setUserStats] = useState(() => loadStateFromStorage()?.userStats || {
     learnedToday: 0,
-    streakDays: 5,
+    streakDays: 1,
     lastActiveDate: new Date().toISOString().split('T')[0],
-    totalReviews: 42
+    totalReviews: 0
   });
 
   const [customWords, setCustomWords] = useState(() => loadStateFromStorage()?.customWords || []);
-  
-  // 保存被删除单词的ID集合（保存在 localStorage 里）
   const [deletedWordIds, setDeletedWordIds] = useState(() => loadStateFromStorage()?.deletedWordIds || []);
   const [toastMessage, setToastMessage] = useState(null);
+
+  // -------------------------------------------------------------
+  // ✨ 核心新增：自动从 GitHub 读取 words.csv 词库文件
+  // -------------------------------------------------------------
+  useEffect(() => {
+    const fetchWords = async () => {
+      // 只有当本地没有单词数据时，才会去 GitHub 拉取，避免每次刷新重复覆盖你的进度
+      if (customWords.length === 0) {
+        try {
+          const response = await fetch(GITHUB_CSV_URL);
+          if (!response.ok) {
+             throw new Error(`网络请求错误! 状态码: ${response.status}`);
+          }
+          const csvText = await response.text();
+          
+          // 按行解析 CSV
+          const lines = csvText.split(/\r?\n/);
+          const parsedList = [];
+
+          // 自动检测并跳过第一行表头 (例如第一行是 word, translation 等)
+          let startIndex = 0;
+          if (lines[0] && lines[0].toLowerCase().includes('word')) {
+              startIndex = 1;
+          }
+
+          for (let idx = startIndex; idx < lines.length; idx++) {
+            const line = lines[idx];
+            if (!line.trim()) continue;
+            
+            // 兼容各种常见分隔符，并去掉前后多余的双引号
+            const parts = line.split(/,|\t|-|：|:/).map(p => p.trim());
+            
+            if (parts.length >= 2) {
+              const word = parts[0].replace(/^"|"$/g, '');
+              const translation = parts[1].replace(/^"|"$/g, '');
+              const phonetic = parts[2] ? parts[2].replace(/^"|"$/g, '') : '';
+              let formattedPhonetic = phonetic ? (phonetic.startsWith('/') ? phonetic : `/${phonetic}/`) : '';
+              const type = parts[3] ? parts[3].replace(/^"|"$/g, '') : 'n.';
+              const example_en = parts[4] ? parts[4].replace(/^"|"$/g, '') : '';
+              const example_cn = parts[5] ? parts[5].replace(/^"|"$/g, '') : '';
+
+              parsedList.push({
+                id: 'gh_' + Date.now() + '_' + idx,
+                word,
+                translation,
+                phonetic: formattedPhonetic,
+                type,
+                example_en,
+                example_cn,
+                tags: ['网络词库']
+              });
+            }
+          }
+
+          if (parsedList.length > 0) {
+            setCustomWords(parsedList);
+            showToast(`成功从云端拉取了 ${parsedList.length} 个单词！`);
+          }
+
+        } catch (error) {
+          console.error("加载 GitHub 词库失败:", error);
+          showToast("加载在线词库失败，请检查网络或CSV文件链接是否正确。");
+        }
+      }
+    };
+
+    fetchWords();
+  }, [customWords.length]); 
+  // -------------------------------------------------------------
 
   useEffect(() => {
     saveStateToStorage({
@@ -92,25 +162,15 @@ export default function App() {
     }
   };
 
-  // 获取当前未被删除的单词列表
   const allCurrentWords = useMemo(() => {
-    let sourceWords = [];
-    if (selectedBookId === 'custom') {
-      sourceWords = customWords;
-    } else {
-      sourceWords = PRESET_VOCABULARIES[selectedBookId]?.words || [];
-    }
+    let sourceWords = customWords;
     return sourceWords.filter(w => !deletedWordIds.includes(w.id));
-  }, [selectedBookId, customWords, deletedWordIds]);
-
-  // 获取已被删除的单词列表（回收站）
-  const deletedWordsList = useMemo(() => {
-    const allPresets = Object.values(PRESET_VOCABULARIES).flatMap(b => b.words);
-    const combined = [...allPresets, ...customWords];
-    return combined.filter(w => deletedWordIds.includes(w.id));
   }, [customWords, deletedWordIds]);
 
-  // 删除单词方法
+  const deletedWordsList = useMemo(() => {
+    return customWords.filter(w => deletedWordIds.includes(w.id));
+  }, [customWords, deletedWordIds]);
+
   const handleDeleteWord = (wordId) => {
     if (!deletedWordIds.includes(wordId)) {
       setDeletedWordIds(prev => [...prev, wordId]);
@@ -118,26 +178,25 @@ export default function App() {
     }
   };
 
-  // 恢复单词方法
   const handleRestoreWord = (wordId) => {
     setDeletedWordIds(prev => prev.filter(id => id !== wordId));
     showToast('已恢复保留该单词');
   };
 
-  // 清空垃圾桶
   const handleClearTrash = () => {
-    if (window.confirm('确定要彻底清空已删除列表吗？')) {
+    if (window.confirm('确定要彻底清空已删除列表吗？操作不可逆！')) {
+      // 真正地从 customWords 里面把已被标记删除的单词剔除掉
+      setCustomWords(prev => prev.filter(w => !deletedWordIds.includes(w.id)));
       setDeletedWordIds([]);
       showToast('垃圾桶已清空');
     }
   };
 
-  // 算法归类与数据统计
   const statsCalculated = useMemo(() => {
-    let forgotCount = 0;   // 1天 (忘记)
-    let vagueCount = 0;    // 3天 (模糊)
-    let familiarCount = 0; // 7天 (熟知)
-    let masteredCount = 0; // 30天 (太简单/已掌握)
+    let forgotCount = 0;   
+    let vagueCount = 0;    
+    let familiarCount = 0; 
+    let masteredCount = 0; 
     
     Object.values(userProgress).forEach(item => {
       if (item.status === 'forgot') forgotCount++;
@@ -149,7 +208,7 @@ export default function App() {
     const totalAssessed = forgotCount + vagueCount + familiarCount + masteredCount;
     const retentionRate = totalAssessed > 0 
       ? Math.round(((familiarCount + masteredCount) / totalAssessed) * 100) 
-      : 85;
+      : 100;
 
     return {
       learnedToday: userStats.learnedToday,
@@ -163,7 +222,6 @@ export default function App() {
     };
   }, [userProgress, userStats, dailyGoal]);
 
-  // 背单词评估方法 (1=1天忘记, 2=3天模糊, 3=7天熟知, 4=30天太简单)
   const handleWordEvaluate = (wordId, rating) => {
     const now = Date.now();
     const intervals = { 1: 1, 2: 3, 3: 7, 4: 30 };
@@ -239,17 +297,9 @@ export default function App() {
 
             <div className="hidden sm:block h-5 w-[1px] bg-slate-300 dark:bg-slate-700 mx-1"></div>
 
-            <select
-              value={selectedBookId}
-              onChange={(e) => setSelectedBookId(e.target.value)}
-              className={`text-xs font-semibold px-3 py-1.5 rounded-lg border cursor-pointer outline-none transition-all ${
-                theme === 'dark' 
-                  ? 'bg-slate-800 border-slate-700 text-slate-200 hover:border-slate-600' 
-                  : 'bg-slate-100 border-slate-200 text-slate-700 hover:border-slate-300'
-              }`}
-            >
-              <option value="custom">✨ 我的自定义词库 ({customWords.length})</option>
-            </select>
+            <span className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-indigo-50 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-400">
+              ✨ 我的自定义词库 ({allCurrentWords.length})
+            </span>
           </div>
 
           <nav className="hidden md:flex items-center gap-1">
@@ -346,6 +396,8 @@ export default function App() {
                 setCustomWords([]);
                 setDeletedWordIds([]);
                 showToast('已重置所有用户数据');
+                // 重置后刷新页面可以触发自动拉取最新的 CSV
+                window.location.reload();
               }
             }}
             theme={theme}
@@ -416,7 +468,7 @@ function DashboardView({ stats, theme, currentBookName, onStartLearning, onStart
         <div className="relative z-10 flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
           <div>
             <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-indigo-600 text-white mb-3">
-              <Sparkles size={12} /> SM-2 智能归类算法
+              <Sparkles size={12} /> 自动归类与云端同步
             </span>
             <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
               保持节奏，高效积累！
@@ -451,10 +503,9 @@ function DashboardView({ stats, theme, currentBookName, onStartLearning, onStart
         <StatCard icon={<Target className="text-indigo-500" size={24} />} label="今日目标" value={`${stats.learnedToday} / ${stats.dailyGoal}`} subText={`完成度 ${goalPercent}%`} theme={theme} />
         <StatCard icon={<Flame className="text-amber-500" size={24} />} label="连续打卡" value={`${stats.streakDays} 天`} subText="状态良好" theme={theme} />
         <StatCard icon={<CheckCircle className="text-emerald-500" size={24} />} label="已掌握(30天)" value={`${stats.masteredCount} 词`} subText={`熟知(7天): ${stats.familiarCount}`} theme={theme} />
-        <StatCard icon={<BarChart2 className="text-sky-500" size={24} />} label="记忆持久率" value={`${stats.retentionRate}%`} subText="自动归类算法" theme={theme} />
+        <StatCard icon={<BarChart2 className="text-sky-500" size={24} />} label="整体熟悉度" value={`${stats.retentionRate}%`} subText="自动归类算法计算" theme={theme} />
       </div>
 
-      {/* 归类阶段面板 */}
       <div className={`p-6 rounded-3xl border ${theme === 'dark' ? 'bg-slate-800/60 border-slate-700' : 'bg-white border-slate-200'}`}>
         <h3 className="font-bold text-lg mb-4 flex items-center gap-2">
           <Layers size={20} className="text-indigo-500" /> 词汇归类状态分布
@@ -788,10 +839,10 @@ function VocabularyLibraryView({
     if (!matchesSearch) return false;
 
     if (filterMode === 'starred') return !!userProgress[w.id]?.starred;
-    if (filterMode === 'forgot') return userProgress[w.id]?.status === 'forgot';     // 1天
-    if (filterMode === 'vague') return userProgress[w.id]?.status === 'vague';       // 3天
-    if (filterMode === 'familiar') return userProgress[w.id]?.status === 'familiar'; // 7天
-    if (filterMode === 'mastered') return userProgress[w.id]?.status === 'mastered'; // 30天
+    if (filterMode === 'forgot') return userProgress[w.id]?.status === 'forgot';     
+    if (filterMode === 'vague') return userProgress[w.id]?.status === 'vague';       
+    if (filterMode === 'familiar') return userProgress[w.id]?.status === 'familiar'; 
+    if (filterMode === 'mastered') return userProgress[w.id]?.status === 'mastered'; 
     return true;
   });
 
@@ -802,7 +853,7 @@ function VocabularyLibraryView({
     onAddCustomWord({
       ...newWord,
       id: 'custom_' + Date.now() + Math.random().toString(36).substring(2, 5),
-      tags: ['自定义']
+      tags: ['自定义添加']
     });
 
     setNewWord({ word: '', phonetic: '', type: 'n.', translation: '', example_en: '', example_cn: '' });
@@ -1288,7 +1339,7 @@ function SettingsView({ dailyGoal, onUpdateGoal, accentPreference, onUpdateAccen
             onClick={onResetData}
             className="px-4 py-2.5 bg-red-50 text-red-600 border border-red-200 dark:bg-red-950/40 dark:border-red-900/50 rounded-xl font-bold text-sm hover:bg-red-100 transition-colors"
           >
-            重置所有本地背词进度数据
+            重置所有本地数据并重新拉取词库
           </button>
         </div>
       </div>
