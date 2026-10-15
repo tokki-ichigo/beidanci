@@ -3,11 +3,10 @@ import {
   BookOpen, Flame, CheckCircle, Home, Library, Settings, Eye, RotateCcw, 
   ChevronRight, Trophy, Volume2, Sparkles, Moon, Sun, Search, Plus, 
   Trash2, Star, Target, Brain, Award, Play, Check, X, ArrowRight,
-  Filter, Download, Upload, RefreshCw, BarChart2, Layers, HelpCircle, FileText,
-  Clock, AlertCircle, HelpCircle as HelpIcon, Smile
+  Filter, Download, Upload, RefreshCw, BarChart2, Layers, HelpCircle, FileText
 } from 'lucide-react';
 
-// 移除默认预设词库，改为完全自定义
+// 彻底清空预设词库，不需要 cet4
 const PRESET_VOCABULARIES = {};
 
 const STORAGE_KEY = 'wordmaster_app_state_v2';
@@ -34,8 +33,9 @@ export default function App() {
   const [theme, setTheme] = useState(() => loadStateFromStorage()?.theme || 'light');
   const [activeTab, setActiveTab] = useState('dashboard');
   
-  // 默认选中我的自定义词库
+  // 默认直接选中自定义词库
   const [selectedBookId, setSelectedBookId] = useState('custom');
+  
   const [dailyGoal, setDailyGoal] = useState(() => loadStateFromStorage()?.dailyGoal || 15);
   const [accentPreference, setAccentPreference] = useState(() => loadStateFromStorage()?.accentPreference || 'en-US');
   const [autoPronounce, setAutoPronounce] = useState(() => loadStateFromStorage()?.autoPronounce ?? true);
@@ -43,12 +43,14 @@ export default function App() {
   const [userProgress, setUserProgress] = useState(() => loadStateFromStorage()?.userProgress || {});
   const [userStats, setUserStats] = useState(() => loadStateFromStorage()?.userStats || {
     learnedToday: 0,
-    streakDays: 1,
+    streakDays: 5,
     lastActiveDate: new Date().toISOString().split('T')[0],
-    totalReviews: 0
+    totalReviews: 42
   });
 
   const [customWords, setCustomWords] = useState(() => loadStateFromStorage()?.customWords || []);
+  
+  // 保存被删除单词的ID集合（保存在 localStorage 里）
   const [deletedWordIds, setDeletedWordIds] = useState(() => loadStateFromStorage()?.deletedWordIds || []);
   const [toastMessage, setToastMessage] = useState(null);
 
@@ -90,15 +92,25 @@ export default function App() {
     }
   };
 
+  // 获取当前未被删除的单词列表
   const allCurrentWords = useMemo(() => {
-    let sourceWords = customWords;
+    let sourceWords = [];
+    if (selectedBookId === 'custom') {
+      sourceWords = customWords;
+    } else {
+      sourceWords = PRESET_VOCABULARIES[selectedBookId]?.words || [];
+    }
     return sourceWords.filter(w => !deletedWordIds.includes(w.id));
-  }, [customWords, deletedWordIds]);
+  }, [selectedBookId, customWords, deletedWordIds]);
 
+  // 获取已被删除的单词列表（回收站）
   const deletedWordsList = useMemo(() => {
-    return customWords.filter(w => deletedWordIds.includes(w.id));
+    const allPresets = Object.values(PRESET_VOCABULARIES).flatMap(b => b.words);
+    const combined = [...allPresets, ...customWords];
+    return combined.filter(w => deletedWordIds.includes(w.id));
   }, [customWords, deletedWordIds]);
 
+  // 删除单词方法
   const handleDeleteWord = (wordId) => {
     if (!deletedWordIds.includes(wordId)) {
       setDeletedWordIds(prev => [...prev, wordId]);
@@ -106,19 +118,21 @@ export default function App() {
     }
   };
 
+  // 恢复单词方法
   const handleRestoreWord = (wordId) => {
     setDeletedWordIds(prev => prev.filter(id => id !== wordId));
     showToast('已恢复保留该单词');
   };
 
+  // 清空垃圾桶
   const handleClearTrash = () => {
     if (window.confirm('确定要彻底清空已删除列表吗？')) {
-      setCustomWords(prev => prev.filter(w => !deletedWordIds.includes(w.id)));
       setDeletedWordIds([]);
       showToast('垃圾桶已清空');
     }
   };
 
+  // 算法归类与数据统计
   const statsCalculated = useMemo(() => {
     let forgotCount = 0;   // 1天 (忘记)
     let vagueCount = 0;    // 3天 (模糊)
@@ -135,7 +149,7 @@ export default function App() {
     const totalAssessed = forgotCount + vagueCount + familiarCount + masteredCount;
     const retentionRate = totalAssessed > 0 
       ? Math.round(((familiarCount + masteredCount) / totalAssessed) * 100) 
-      : 100;
+      : 85;
 
     return {
       learnedToday: userStats.learnedToday,
@@ -149,6 +163,7 @@ export default function App() {
     };
   }, [userProgress, userStats, dailyGoal]);
 
+  // 背单词评估方法 (1=1天忘记, 2=3天模糊, 3=7天熟知, 4=30天太简单)
   const handleWordEvaluate = (wordId, rating) => {
     const now = Date.now();
     const intervals = { 1: 1, 2: 3, 3: 7, 4: 30 };
@@ -224,9 +239,17 @@ export default function App() {
 
             <div className="hidden sm:block h-5 w-[1px] bg-slate-300 dark:bg-slate-700 mx-1"></div>
 
-            <span className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-indigo-50 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-400">
-              ✨ 我的词库 ({customWords.length})
-            </span>
+            <select
+              value={selectedBookId}
+              onChange={(e) => setSelectedBookId(e.target.value)}
+              className={`text-xs font-semibold px-3 py-1.5 rounded-lg border cursor-pointer outline-none transition-all ${
+                theme === 'dark' 
+                  ? 'bg-slate-800 border-slate-700 text-slate-200 hover:border-slate-600' 
+                  : 'bg-slate-100 border-slate-200 text-slate-700 hover:border-slate-300'
+              }`}
+            >
+              <option value="custom">✨ 我的自定义词库 ({customWords.length})</option>
+            </select>
           </div>
 
           <nav className="hidden md:flex items-center gap-1">
@@ -257,7 +280,7 @@ export default function App() {
           <DashboardView 
             stats={statsCalculated} 
             theme={theme}
-            currentBookName="我的词库"
+            currentBookName="自定义词库"
             onStartLearning={() => setActiveTab('learning')}
             onStartQuiz={() => setActiveTab('quiz')}
           />
@@ -514,7 +537,7 @@ function LearningCardView({ words, userProgress, onEvaluate, onToggleStar, speak
   if (!words || words.length === 0) {
     return (
       <div className="text-center py-20">
-        <p className="text-slate-500 mb-4">词库目前没有单词，请前往“词库管理”导入你的本地 CSV 或添加单词。</p>
+        <p className="text-slate-500 mb-4">当前所选词库没有可用单词（或已被全部删除），请前往“词库管理”添加或导入。</p>
         <button onClick={onFinish} className="px-6 py-2.5 bg-indigo-600 text-white rounded-xl font-bold">返回仪表盘</button>
       </div>
     );
@@ -527,7 +550,7 @@ function LearningCardView({ words, userProgress, onEvaluate, onToggleStar, speak
           <CheckCircle size={44} />
         </div>
         <h2 className="text-2xl font-black mb-2">太棒了，全部学完！</h2>
-        <p className={`text-sm mb-8 ${theme === 'dark' ? 'text-slate-400' : 'text-slate-600'}`}>归类选择已完全同步并自动归类到对应类别中。</p>
+        <p className={`text-sm mb-8 ${theme === 'dark' ? 'text-slate-400' : 'text-slate-600'}`}>已根据您的选择自动归类到各个记忆阶段。</p>
         <button onClick={onFinish} className="w-full py-3.5 bg-gradient-to-r from-indigo-600 to-violet-600 text-white font-bold rounded-2xl shadow-lg shadow-indigo-500/25">
           完成并返回仪表盘
         </button>
